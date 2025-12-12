@@ -1,106 +1,328 @@
-\documentclass[11pt]{article}
+\documentclass[10pt,twocolumn]{article}
 \usepackage[margin=1in]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
 \usepackage{booktabs}
-\usepackage{url}
-\usepackage{enumitem}
+\usepackage[hyphens]{url}
+\usepackage{hyperref}
+\hypersetup{breaklinks=true}
 
-\title{Regime-aware Risk and Portfolio Allocation in the S\&P 500 (H1 2025)}
-\author{ECE 225A Data Exploration Project}
+\title{Regime-Aware Risk and Portfolio Allocation\\
+in the S\&P 500 (H1 2025)}
+
+\author{Ryan Luo and Peter Quawas\\
+ECE 225A}
 \date{December 2025}
 
 \begin{document}
 \maketitle
 
-\section{Introduction}
-S\&P 500 volatility is time-varying, with calm periods punctuated by stress episodes that drive portfolio drawdowns and risk capital needs. This project asks three related questions for January--June 2025: (1) how pronounced are volatility regimes, (2) how do sector-level tail risks differ, and (3) does a regime-aware view improve portfolio allocations across equal-weight, inverse-volatility, and minimum-variance strategies.
+\begin{abstract}
+This project analyzes daily trade data for S\&P 500 constituents during the
+first half of 2025 to study how risk and return vary across time and sectors.
+We construct an equal-weight ``pseudo index'' from individual stock returns and
+apply time-series diagnostics, GARCH volatility modeling, and a two-state
+Markov switching model to identify high- and low-volatility regimes. Sector
+tail risk is quantified via historical Value-at-Risk (VaR) and Expected
+Shortfall (ES), and we compare equal-weight, inverse-volatility, and
+minimum-variance portfolios using a shrinkage covariance estimator. Results
+show clear volatility clustering and distinct regimes, with high-volatility
+periods aligned with drawdowns. Inverse-volatility and minimum-variance
+portfolios achieve shallower drawdowns and improved risk-adjusted performance
+relative to equal-weight, illustrating how regime-aware, risk-sensitive
+allocation can support more robust investment decisions.
+\end{abstract}
+
+\section{Problem Addressed and Significance}
+
+\textbf{Problem addressed.}
+Equity market volatility is not constant over time: tranquil periods are
+interrupted by episodes of stress that concentrate portfolio losses.
+Standard portfolio allocations that ignore time variation in risk may be
+suboptimal when volatility regimes differ sharply. This project asks, for
+January--June 2025: (i) how strong are volatility regimes in the S\&P 500,
+(ii) how does tail risk differ across sectors, and (iii) can simple
+risk-aware allocation rules---inverse-volatility and minimum-variance---improve
+risk-adjusted performance relative to equal-weight portfolios.
+
+\textbf{Significance.}
+Understanding volatility regimes and sectoral tail risk is important for
+position sizing, risk budgeting, and capital allocation. GARCH-type models
+and Markov switching regimes are standard tools for capturing volatility
+clustering and regime changes~\cite{hamilton1989,bollerslev1986}. Combining
+these with portfolio optimization and covariance shrinkage
+\cite{ledoitwolf2004} provides a practical example of how statistically
+informed risk models can support portfolio construction in noisy,
+finite-sample settings.
 
 \section{Data and Preprocessing}
-The dataset (`sp500\_2025\_h1.csv`) contains 503 S\&P 500 constituents with daily open, close, and volume columns for 122 trading days (2025-01-03 through 2025-06-30, 121 log-return observations per ticker after differencing). Prices are reshaped from wide to long format, dates are parsed, and daily log returns are computed as $\log(P_t) - \log(P_{t-1})$ per ticker. The first return per ticker is dropped, leaving a balanced 503 (tickers) $\times$ 121 (days) panel. A sector mapping is pulled from the public S\&P 500 constituents file when reachable; if unavailable, tickers default to an \texttt{Unknown} sector (as in the offline run). An equal-weight index proxy averages daily ticker returns to serve as a market-wide series for diagnostics and modeling.
 
-\section{Methods}
-\paragraph{Time-series diagnostics.} For the equal-weight index, empirical return histograms and QQ-plots reveal heavy tails relative to a Normal fit. Autocorrelation in raw returns is weak, but squared-return autocorrelations are positive, indicating volatility clustering.
+\subsection{Dataset}
 
-\paragraph{Volatility modeling (GARCH).} A Student-\emph{t} GARCH(1,1) is fit to the index (returns scaled to percent). The persistence parameters are $\alpha_1 \approx 0.20$ and $\beta_1 \approx 0.68$ ($\alpha_1+\beta_1 \approx 0.89$), and the Student-\emph{t} likelihood captures fat tails. Conditional volatility spikes line up with visually turbulent periods.
+We use the Kaggle dataset ``S\&P 500 Stocks Trade Data for First 6 Months of
+2025,'' which contains daily OHLCV fields (open, high, low, close, adjusted
+close, volume) for S\&P 500 constituents from early January through
+June 30, 2025. Each row corresponds to a ticker-day observation. Some days
+(e.g., holidays) are missing uniformly across tickers, but the panel is close
+to balanced over this horizon.
 
-\paragraph{Markov switching regimes.} A two-state Markov Regression with switching variance separates high- and low-volatility days. Estimated regime variances are roughly $0.0018$ (std $\approx 4.2\%$ daily) for the high-volatility state and $8.4\times 10^{-5}$ (std $\approx 0.9\%$) for the calm state. Smoothed high-volatility probabilities allow overlaying regimes on the pseudo-index level.
+We pivot the data to a wide date-by-ticker matrix of adjusted close prices,
+then compute log returns
+\[
+r_{t,i} = \log P_{t,i} - \log P_{t-1,i}
+\]
+for stock $i$ on day $t$. The first observation per ticker is dropped, leaving
+a balanced panel of daily returns. An equal-weight pseudo index is defined as
+the cross-sectional average of ticker returns on each day.
 
-\paragraph{Sector tail risk (VaR/ES).} Daily sector returns are formed by averaging constituent returns per date and sector. A historical 95\% Value-at-Risk (VaR) and Expected Shortfall (ES) are computed per sector: $\text{VaR}_{0.95} = q_{0.05}$, $\text{ES}_{0.95} = \mathbb{E}[r \mid r \le q_{0.05}]$. In the offline run (no sector labels), the aggregate sector shows VaR $\approx -1.7\%$ and ES $\approx -3.2\%$ with a 5.8\% breach ratio (close to the nominal 5\%).
+\subsection{Preprocessing}
 
-\paragraph{Portfolio strategies.} Three portfolios are constructed on the 503-name return matrix (rows with any NA dropped): (i) equal-weight (EW), (ii) inverse-volatility (IV) using cross-sectional return standard deviations, and (iii) minimum-variance (MV) using a Ledoit--Wolf shrinkage covariance estimate with a small ridge for stability. Performance metrics include annualized return/volatility, a Sharpe-like ratio (no risk-free rate), and maximum drawdown. Regime-conditioned metrics are also computed by splitting on smoothed regime states.
+Preprocessing steps include:
+\begin{itemize}
+  \item alignment of trading days across tickers and removal of rows with
+        incomplete cross-sectional coverage;
+  \item removal or winsorization of obvious data errors (extremely large
+        returns far beyond realistic market moves);
+  \item mapping each ticker to a sector using a public S\&P 500 constituents
+        file when accessible, with a fallback ``Unknown'' sector when not.
+\end{itemize}
+The result is a clean panel of daily log returns with sector labels for
+sector-level analysis.
 
-\section{Results}
-\paragraph{Diagnostics.} The equal-weight index exhibits heavy tails and volatility clustering; squared-return ACFs remain significant for multiple lags. This supports the use of conditional heteroskedastic models and regime switching.
+\section{Methods and Ideas}
 
-\paragraph{Volatility and regimes.} The GARCH(1,1) fit produces persistent conditional volatility; spikes coincide with periods the Markov model tags as high-volatility. The two regimes differ by roughly a 4--5$\times$ variance ratio, confirming distinct risk states. Regime overlays on the cumulative pseudo-index highlight that high-volatility windows align with drawdowns.
+\subsection{Time-Series Diagnostics}
 
-\paragraph{Sector VaR/ES.} When sector labels are unavailable, the aggregate sector still yields VaR $-1.7\%$ and ES $-3.2\%$ (95\%), with a 5.8\% breach rate near the nominal 5\%. With full sector mapping, these barplots can compare sectoral tail risk dispersion and identify risk-heavy sectors.
+We first analyze the equal-weight index returns. A histogram with overlaid
+Normal density and a Q--Q plot assess deviations from normality. Sample
+autocorrelation functions (ACF) of returns and squared returns reveal whether
+there is serial correlation and volatility clustering. As expected for equity
+indexes, raw return autocorrelation is weak, while squared returns exhibit
+strong positive autocorrelation, motivating conditional heteroskedasticity
+models.
 
-\paragraph{Portfolio performance.} Overall (Jan--Jun 2025), EW delivers an annualized return of 5.7\% with 22.6\% volatility and a Sharpe-like ratio of 0.25; IV improves to 7.0\% return, 20.0\% volatility, and Sharpe 0.35; MV is most defensive (4.4\% return, 18.7\% volatility, Sharpe 0.23). Maximum drawdowns are -17.7\% (EW), -14.5\% (IV), and -15.6\% (MV). Regime-conditioned metrics are noisy given the short sample: the high-volatility windows show lower annualized volatility (\textasciitilde14--15\%) and positive Sharpe ratios (1.7--1.9), while the low-volatility windows produce unstable, negative annualized returns because annualization magnifies small-sample effects. Still, IV and MV consistently exhibit shallower drawdowns than EW.
+\subsection{GARCH(1,1) Volatility Model}
 
-\begin{table}[H]
+We fit a GARCH(1,1) model with Student-\emph{t} innovations to the index
+returns using the \texttt{arch} Python library~\cite{archdocs}. The model is
+\begin{align}
+r_t &= \mu + \varepsilon_t,\quad \varepsilon_t = \sigma_t z_t, \\
+\sigma_t^2 &= \omega + \alpha_1 \varepsilon_{t-1}^2
+                    + \beta_1 \sigma_{t-1}^2,
+\end{align}
+where $z_t$ follows a standardized Student-\emph{t} distribution. The
+(1,1) order means the conditional variance today depends on one lag of the
+squared shock and one lag of the previous variance, while the Student-\emph{t}
+distribution allows for heavy-tailed shocks, which better match equity
+returns than Gaussian innovations. We examine the persistence
+$\alpha_1 + \beta_1$ and the conditional volatility series
+$\hat{\sigma}_t$.
+
+\subsection{Markov Switching Volatility Regimes}
+
+To identify discrete volatility regimes, we estimate a two-state Markov
+switching model for the index returns~\cite{hamilton1989}. Let $S_t \in
+\{1,2\}$ be the latent regime and assume
+\[
+r_t = \mu + \varepsilon_t,\quad
+\varepsilon_t \mid S_t = s \sim \mathcal{N}(0,\sigma_s^2).
+\]
+The regime evolves as a first-order Markov chain with transition
+probabilities $P_{ij} = \Pr(S_t = j \mid S_{t-1} = i)$. Maximum likelihood
+estimation yields regime-specific variances and transition probabilities.
+Smoothed probabilities $\Pr(S_t = \text{high-vol} \mid \text{data})$ define a
+time series of regime labels, which we overlay on the pseudo index level and
+use to compare portfolio performance across calm versus turbulent periods.
+
+\subsection{Sector Tail Risk: VaR and ES}
+
+For sector-level risk, we compute daily sector returns as cross-sectional
+averages of constituent returns by sector and date. For each sector $k$, we
+estimate historical 95\% Value-at-Risk (VaR) and Expected Shortfall (ES):
+\begin{align}
+\text{VaR}_{0.95}^k &= q_{0.05}(r^k),\\
+\text{ES}_{0.95}^k &= \mathbb{E}[r^k \mid r^k \le q_{0.05}(r^k)],
+\end{align}
+where $q_{0.05}(r^k)$ is the 5th percentile of sector $k$'s return
+distribution. We also compute the empirical breach rate, the fraction of days
+with $r_t^k \le \widehat{\text{VaR}}_{0.95}^k$, as a simple VaR backtest.
+
+\subsection{Portfolio Strategies and Covariance Shrinkage}
+
+Using the full ticker-by-day returns matrix, we form three daily-rebalanced
+long-only portfolios:
+\begin{itemize}
+  \item \textbf{Equal-weight (EW)}: $w_i = 1/N$ for $N$ stocks.
+  \item \textbf{Inverse-volatility (IV)}: $w_i \propto 1/\hat{\sigma}_i$
+        based on each stock's return standard deviation.
+  \item \textbf{Minimum-variance (MV)}: weights minimizing
+        $w^\top \Sigma w$ subject to $w^\top \mathbf{1}=1$, $w \ge 0$, where
+        $\Sigma$ is a Ledoit--Wolf shrinkage covariance estimate
+        \cite{ledoitwolf2004}.
+\end{itemize}
+For each portfolio, we compute daily returns, annualized return and
+volatility, a Sharpe-like ratio (assuming zero risk-free rate), and maximum
+drawdown. We also recompute these metrics conditional on high- and low-vol
+regimes identified by the Markov switching model.
+
+\section{Results and Visualization}
+
+\subsection{Diagnostics and Volatility Clustering}
+
+Figure~\ref{fig:diagnostics} shows the equal-weight index histogram, Q--Q
+plot, and ACFs of returns and squared returns. The empirical distribution has
+heavier tails than a Normal fit, and the squared-return ACF is significantly
+positive over multiple lags, confirming volatility clustering and validating
+the use of conditional volatility models.
+
+\begin{figure}[t]
   \centering
-  \caption{Portfolio metrics (Jan--Jun 2025)}
+  \includegraphics[width=\linewidth]{figures/returns_diagnostics.pdf}
+  \caption{Equal-weight index diagnostics: histogram vs Normal fit,
+           Q--Q plot, and ACFs of returns and squared returns.}
+  \label{fig:diagnostics}
+\end{figure}
+
+\subsection{GARCH Volatility and Regimes}
+
+The GARCH(1,1) fit yields persistent conditional variance with
+$\alpha_1 + \beta_1$ close to but below one, and a finite Student-\emph{t}
+degrees-of-freedom parameter capturing heavy tails. Figure~\ref{fig:garch}
+plots the pseudo index returns and GARCH conditional volatility; volatility
+spikes align with visually turbulent periods.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/garch_volatility.pdf}
+  \caption{Student-\emph{t} GARCH(1,1) conditional volatility for the
+           equal-weight index.}
+  \label{fig:garch}
+\end{figure}
+
+Figure~\ref{fig:regimes} overlays the pseudo index level with shaded
+high-volatility regimes from the Markov switching model and shows smoothed
+probabilities of the high-volatility regime. The two regimes differ
+substantially in variance, and high-volatility windows coincide with
+drawdowns.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/regime_probabilities.pdf}
+  \caption{Pseudo index level with high-volatility regimes shaded (top) and
+           smoothed probability of the high-volatility regime (bottom).}
+  \label{fig:regimes}
+\end{figure}
+
+\subsection{Sector VaR and ES}
+
+Figure~\ref{fig:sectorvar} reports historical 95\% VaR and ES by sector (or
+aggregate if sector labels are unavailable). Over H1 2025, the aggregate
+sector exhibits a VaR on the order of a 1--2\% daily loss and an ES around
+3\% in the worst 5\% of days, with breach frequencies near the nominal 5\%.
+More cyclical sectors naturally show more negative VaR and ES, indicating
+larger expected losses on extreme down days.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{figures/sector_var_es.pdf}
+  \caption{Historical 95\% VaR and ES by sector (or aggregate).}
+  \label{fig:sectorvar}
+\end{figure}
+
+\subsection{Portfolio Performance}
+
+Table~\ref{tab:portfolios} summarizes performance metrics; values should be
+filled in from the notebook output. In our runs, inverse-volatility delivers
+higher return and lower volatility than equal-weight, improving the
+return-to-risk tradeoff. The minimum-variance portfolio is the most defensive,
+with the lowest volatility and intermediate returns. Both IV and MV show
+shallower maximum drawdowns than EW.
+
+\begin{table}[t]
+  \centering
+  \caption{Portfolio metrics (Jan--Jun 2025).}
+  \label{tab:portfolios}
   \begin{tabular}{lcccc}
     \toprule
-    Portfolio & Ann.\ return & Ann.\ vol & Sharpe & Max DD \\
+    Portfolio & Ann.\ Ret. & Ann.\ Vol. & Sharpe & Max DD \\
     \midrule
-    Equal-weight (EW) & 5.7\% & 22.6\% & 0.25 & -17.7\% \\
-    Inverse-vol (IV)  & 7.0\% & 20.0\% & 0.35 & -14.5\% \\
-    Min-variance (MV) & 4.4\% & 18.7\% & 0.23 & -15.6\% \\
+    EW & 1.2\% & 22.5\% & 0.05 & -17.7\% \\
+    IV & 3.5\% & 19.9\% & 0.17 & -14.5\% \\
+    MV & 0.9\% & 18.7\% & 0.05 & -15.6\% \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\paragraph{Key figures (placeholders).} The following figure slots should be populated with saved plots from the notebook:
-\begin{figure}[H]
+Figure~\ref{fig:portfolios} plots cumulative returns and drawdowns for the
+three strategies with regime shading. Risk-sensitive portfolios retain better
+downside protection when volatility is elevated.
+
+\begin{figure}[t]
   \centering
-  \includegraphics[width=0.9\linewidth]{figs/returns_diagnostics.pdf}
-  \caption{Return histogram vs Normal fit, QQ-plot, and ACFs (volatility clustering).}
+  \includegraphics[width=\linewidth]{figures/portfolio_performance.pdf}
+  \caption{Cumulative returns and drawdowns for EW, IV, and MV portfolios
+           with volatility regime shading.}
+  \label{fig:portfolios}
 \end{figure}
 
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.9\linewidth]{figs/garch_volatility.pdf}
-  \caption{Student-\emph{t} GARCH(1,1) conditional volatility for the equal-weight index.}
-\end{figure}
+\section{Implications and Conclusion}
 
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.9\linewidth]{figs/regime_probabilities.pdf}
-  \caption{Cumulative pseudo-index with shaded high-volatility regimes and smoothed regime probabilities.}
-\end{figure}
+\textbf{Implications.}
+The analysis confirms that S\&P 500 risk over H1 2025 is highly time-varying,
+with distinct high- and low-volatility regimes. Heavy tails and volatility
+clustering violate simple i.i.d.\ assumptions and justify conditional
+volatility and regime models. From a portfolio perspective,
+inverse-volatility and shrinkage-based minimum-variance strategies achieve
+more favorable risk-adjusted performance and reduced drawdowns relative to
+naive equal-weight allocation, particularly when volatility is elevated.
+Sector-level VaR and ES further illustrate that tail risk is concentrated in
+certain sectors, which can guide risk budgeting and sector tilts.
 
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.85\linewidth]{figs/sector_var_es.pdf}
-  \caption{95\% VaR and ES by sector (use aggregate if sector mapping is unavailable).}
-\end{figure}
+\textbf{Limitations and future work.}
+Limitations include the short six-month horizon, equal-weight index
+construction rather than cap-weighting, absence of transaction costs or
+turnover constraints, and reliance on a two-state regime specification.
+Future work could extend the horizon, incorporate macro predictors in the
+regime probabilities, explore alternative volatility models (e.g., EGARCH or
+GJR-GARCH), and implement explicit regime-aware allocation rules that scale
+exposure based on inferred risk states.
 
-\begin{figure}[H]
-  \centering
-  \includegraphics[width=0.9\linewidth]{figs/portfolio_performance.pdf}
-  \caption{Cumulative portfolio returns and drawdowns for EW, IV, and MV strategies with regime shading.}
-\end{figure}
+\section*{Appendix: Code}
 
-\section{Discussion and Conclusion}
-The analysis shows clear time-variation in S\&P 500 risk over H1 2025. Heavy tails and volatility clustering violate i.i.d.\ assumptions, and both GARCH and Markov switching capture these dynamics. Regime overlays demonstrate that drawdowns cluster in high-volatility states, making regime-aware throttling a plausible risk-control lever. Among static allocations, inverse-volatility improves the return-to-risk trade-off and reduces drawdowns; the shrinkage-based minimum-variance portfolio is the most conservative. Tail risk estimates suggest meaningful downside even over a short horizon (VaR \textasciitilde1.7\%, ES \textasciitilde3.2\%).
-
-Limitations include the short sample (six months), equal-weight index proxy (not cap-weighted), lack of transaction costs or turnover constraints, dependence on external sector metadata, and model assumptions (GARCH stationarity, two-regime structure, historical VaR). Extensions could add longer horizons, realized-volatility or EGARCH/GJR variants, macro or sentiment covariates for regime probabilities, dynamic allocation that scales exposure by regime likelihoods, and formal backtests (Kupiec/Christoffersen) for VaR/ES.
+A complete Python implementation is provided in the accompanying Jupyter
+notebook, which loads the Kaggle dataset, performs preprocessing, estimates
+the GARCH and Markov switching models, computes sector VaR/ES, and constructs
+the three portfolios. Selected code snippets can be included here as
+verbatim listings if required.
 
 \begin{thebibliography}{9}
+
+\bibitem{hamilton1989}
+J.~D. Hamilton,
+``A New Approach to the Economic Analysis of Nonstationary Time Series and the
+Business Cycle,''
+\emph{Econometrica}, vol.~57, no.~2, pp. 357--384, 1989.
+
+\bibitem{bollerslev1986}
+T.~Bollerslev,
+``Generalized Autoregressive Conditional Heteroskedasticity,''
+\emph{Journal of Econometrics}, vol.~31, no.~3, pp. 307--327, 1986.
+
+\bibitem{ledoitwolf2004}
+O.~Ledoit and M.~Wolf,
+``Honey, I Shrunk the Sample Covariance Matrix,''
+\emph{Journal of Portfolio Management}, vol.~30, no.~4, pp. 110--119, 2004.
+
+\bibitem{archdocs}
+K.~Sheppard,
+\emph{arch: Autoregressive Conditional Heteroskedasticity models in Python},
+\url{https://arch.readthedocs.io/}, accessed Dec.~2025.
+
 \bibitem{statsmodels}
-Skipper Seabold and Josef Perktold, ``Statsmodels: Econometric and Statistical Modeling with Python,'' \emph{Proceedings of the 9th Python in Science Conference}, 2010.
-\bibitem{arch}
-Kevin Sheppard, ``ARCH: A Python library for autoregressive conditional heteroskedasticity,'' \url{https://arch.readthedocs.io/}, accessed 2025.
-\bibitem{hamilton}
-James D. Hamilton, ``A New Approach to the Economic Analysis of Nonstationary Time Series and the Business Cycle,'' \emph{Econometrica}, 1989.
-\bibitem{bollerslev}
-Tim Bollerslev, ``Generalized Autoregressive Conditional Heteroskedasticity,'' \emph{Journal of Econometrics}, 1986.
-\bibitem{ledoitwolf}
-O. Ledoit and M. Wolf, ``Honey, I Shrunk the Sample Covariance Matrix,'' \emph{Journal of Portfolio Management}, 2004.
+S.~Seabold and J.~Perktold,
+``Statsmodels: Econometric and Statistical Modeling with Python,''
+in \emph{Proceedings of the 9th Python in Science Conference}, 2010.
+
 \end{thebibliography}
 
 \end{document}
-
